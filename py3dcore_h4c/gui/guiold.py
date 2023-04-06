@@ -62,6 +62,8 @@ def guiplot_3d(dt_0 = 'now', delta = 10, model_kwargs: dict = {}):
 
     return fig
 
+def guiplot_insitu(ax, start, end):
+    return fig
 
 def get_iparams():
     model_kwargs = {

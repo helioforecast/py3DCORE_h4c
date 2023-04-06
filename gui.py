@@ -4,14 +4,22 @@ import json
 import os
 import sys
 from typing import List
+import py3dcore_h4c
 import py3dcore_h4c.gui.guiold as go
+from py3dcore_h4c.fitter.base import custom_observer, BaseFitter, get_ensemble_mean
 import datetime
+import pickle
+
+import py3dcore_h4c.fluxplot as fp
 
 import matplotlib
 import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+from matplotlib.dates import num2date, date2num, DateFormatter
+
 import numpy as np
 from PyQt5 import QtWidgets
-from PyQt5.QtWidgets import QLabel, QComboBox, QSlider, QHBoxLayout, QVBoxLayout, QCheckBox, QGraphicsScene, QGraphicsView
+from PyQt5.QtWidgets import QLabel, QComboBox, QSlider, QHBoxLayout, QVBoxLayout, QWidget, QTabWidget, QCheckBox, QFileDialog, QPushButton
 from PyQt5 import QtCore
 from PyQt5.QtCore import Qt, QTime, QDateTime, QDate, QSize
 from PyQt5.QtGui import QFont
@@ -48,18 +56,28 @@ params = ['CME Launch Time','CME Longitude', 'CME Latitude', 'CME Inclination', 
 
 units = ['h','°', '°', '°', 'AU', '', 'rS','km/s', '', '', 'km/s']
 
-variables = ['\u0394 t','lon', 'lat', 'inc', 'd(1AU)', '\u03B4', 'r\u2080', 'v\u2080', 'n', '\u03B3', 'v']
+variables = ['\u0394 t','lon', 'lat', 'inc', 'd(1AU)', '\u03B4', 'r\u2080', 'v\u2080', 'n_a', '\u03B3', 'v']
 
-mins = [0, 0, -90, 0, 0.05, 1, 5, 400, 0.3, 0.2, 250]
+mins = [0, 0, -90, 0, 0.05, 1, 5, 400, 0.3, 0.2, 100]
 
-maxs = [100, 360, 90, 360, 0.35, 6, 100, 1000, 2, 2,700]
+maxs = [100, 360, 90, 360, 0.35, 6, 100, 1200, 2, 3,700]
 
 inits = [0, 0, 0, 0, 0.2, 3, 20, 800, 1.14, 1, 500]
 
 resolutions = [0.1, 0.1, 0.1, 0.1, 0.01, 1, 1, 1, 0.1, 0.1, 1]
 
+
+magparams = ['T_factor', 'Magnetic Decay Rate', 'Magnetic Field Strength 1 AU']
+magunits = ['', '', 'nT']
+magvariables = ['tau', 'n_b','b(1AU)']
+magmins = [-250, 1, 5]
+magmaxs = [250, 2, 50]
+maginits = [100, 1.64, 25]
+magresolutions = [1, 0.01, 1]
 # disable sunpy warnings
 log.setLevel('ERROR')
+
+
 
 #################################################################################
 
@@ -123,20 +141,25 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         
         main_layout = QHBoxLayout()
         self.setLayout(main_layout)
-        
         ############################### creating sidebar ###############################
         
 
         sidebar_layout = QVBoxLayout()
         
         # CALENDAR
+        self.side_tab_widget = QTabWidget()
+        self.side_tab_widget.tabBar().setVisible(False)
+
+        
+        sidebar_tab_layout1 = QVBoxLayout()
         
         date_label = QLabel()
         date_label.setText('Select Date:')
-        sidebar_layout.addWidget(date_label)
+        sidebar_tab_layout1.addWidget(date_label)
         calendar = QtWidgets.QCalendarWidget()
         self.calendar = calendar
-        sidebar_layout.addWidget(self.calendar)
+        self.calendar.setToolTip('Select a date. JHelioviewer will be used to obtain the heliospheric image closest to the date you selected.') 
+        sidebar_tab_layout1.addWidget(self.calendar)
         date = QDate(2020, 4, 15)
         self.calendar.setSelectedDate(date)
         self.calendar.clicked.connect(self.update_canvas)
@@ -144,29 +167,33 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         # TIME
         emptylabel = QLabel()
         emptylabel.setText('')
-        sidebar_layout.addWidget(emptylabel)
+        sidebar_tab_layout1.addWidget(emptylabel)
 
         time_label = QLabel("Select Time:")
         self.time_combobox = QComboBox()
+        self.time_combobox.setToolTip('Select a time. JHelioviewer will be used to obtain the heliospheric image closest to the time you selected.') 
         for hour in range(24):
-            time = QTime(hour, 0)
-            self.time_combobox.addItem(time.toString("h:mm AP"))
-        self.time_combobox.setCurrentIndex(6)
+            for minute in [0, 30]:
+                time = QTime(hour, minute)
+                self.time_combobox.addItem(time.toString("h:mm AP"))
+        currenttime = QTime(6, 0)
+        self.time_combobox.setCurrentText(currenttime.toString("h:mm AP"))
         self.time_combobox.currentIndexChanged.connect(self.update_canvas)
-        sidebar_layout.addWidget(time_label)
-        sidebar_layout.addWidget(self.time_combobox)
+        sidebar_tab_layout1.addWidget(time_label)
+        sidebar_tab_layout1.addWidget(self.time_combobox)
        
         # SPACECRAFTs
         
         
-        sidebar_layout.addWidget(emptylabel)
+        sidebar_tab_layout1.addWidget(emptylabel)
 
         self.checkboxes = []
         self.meshplots = []
         
         spaecrafts_label = QLabel()
         spaecrafts_label.setText('Spacecraft and Instrument:')
-        sidebar_layout.addWidget(spaecrafts_label)
+        spaecrafts_label.setToolTip('Select the spacecraft you want to load images using JHelioviewer for.') 
+        sidebar_tab_layout1.addWidget(spaecrafts_label)
         
         vlayout_sta = QHBoxLayout()
         checkbox_sta = QCheckBox("STEREO-A")
@@ -179,7 +206,7 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
             self.instr_combobox_sta.addItem(i)
         self.instr_combobox_sta.currentIndexChanged.connect(self.update_canvas)
         vlayout_sta.addWidget(self.instr_combobox_sta)
-        sidebar_layout.addLayout(vlayout_sta)
+        sidebar_tab_layout1.addLayout(vlayout_sta)
         
         vlayout_stb = QHBoxLayout()
         checkbox_stb = QCheckBox("STEREO-B")
@@ -191,7 +218,7 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
             self.instr_combobox_stb.addItem(i)
         self.instr_combobox_stb.currentIndexChanged.connect(self.update_canvas)
         vlayout_stb.addWidget(self.instr_combobox_stb)
-        sidebar_layout.addLayout(vlayout_stb)
+        sidebar_tab_layout1.addLayout(vlayout_stb)
         
         vlayout_soho = QHBoxLayout()
         checkbox_soho = QCheckBox("SOHO")
@@ -204,23 +231,107 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
             self.instr_combobox_soho.addItem(i)
         self.instr_combobox_stb.currentIndexChanged.connect(self.update_canvas)
         vlayout_soho.addWidget(self.instr_combobox_soho)
-        sidebar_layout.addLayout(vlayout_soho)
+        sidebar_tab_layout1.addLayout(vlayout_soho)
         
         
         # 3DCORE MODEL
         
-        sidebar_layout.addWidget(emptylabel)
+        sidebar_tab_layout1.addWidget(emptylabel)
 
         core_label = QLabel()
         core_label.setText('Draw Grid:')
-        sidebar_layout.addWidget(core_label)
+        sidebar_tab_layout1.addWidget(core_label)
         self.corebox = QCheckBox("3DCORE Flux Rope Model")
+        self.corebox.setToolTip('The 3DCORE Flux Rope Model was originally created by Andreas J. Weiss.') 
         self.corebox.stateChanged.connect(self.update_canvas)
-        sidebar_layout.addWidget(self.corebox)
+        sidebar_tab_layout1.addWidget(self.corebox)
+        
+        sidebar_tab_widget1 = QWidget()
+        sidebar_tab_widget1.setLayout(sidebar_tab_layout1)
+        self.side_tab_widget.addTab(sidebar_tab_widget1, "General")
 
+        # create second tab
+        
+        sidebar_tab_layout2 = QVBoxLayout()
+        sidebar_tab_layout2.setAlignment(Qt.AlignTop)
+        
+        # launchtime
+        
+        timerangelabel = QLabel("Select Range:")
+        timerangelabel.setToolTip('Select start and end time to be shown in the insitu plot.') 
+        sidebar_tab_layout2.addWidget(timerangelabel)
+                
+        startselectlayout = QHBoxLayout()
+        startselectlabel = QLabel("Start Time: ")
+        startselectlayout.addWidget(startselectlabel)
+        startselectlayout.addStretch(1)
+        self.startselect = QtWidgets.QDateTimeEdit()
+        self.startselect.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.startselect.setDateTime(QDateTime(2020, 4, 15,0,0))
+        #self.startselect.setCalendarPopup(True)
+        self.startselect.dateTimeChanged.connect(self.plot_mesh)
+        startselectlayout.addWidget(self.startselect)
+        
+        endselectlayout = QHBoxLayout()
+        endselectlabel = QLabel("End Time: ")
+        endselectlayout.addWidget(endselectlabel)
+        endselectlayout.addStretch(1)
+        self.endselect = QtWidgets.QDateTimeEdit()
+        self.endselect.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.endselect.setDateTime(QDateTime(2020, 4, 15,18,0))
+        #self.startselect.setCalendarPopup(True)
+        self.endselect.dateTimeChanged.connect(self.plot_mesh)
+        endselectlayout.addWidget(self.endselect)
+        
+        
+        # OBSERVER
+        observer_label = QLabel("Select Observer:")
+        self.observer_combobox = QComboBox()
+        self.observer_combobox.addItem('')
+        self.observer_combobox.currentIndexChanged.connect(self.observer_changed)
+        
+        #sidebar_tab_layout2.addWidget(emptylabel)
+        #sidebar_tab_layout2.addWidget(emptylabel)
+        sidebar_tab_layout2.addLayout(startselectlayout)
+        sidebar_tab_layout2.addLayout(endselectlayout)
+        #sidebar_tab_layout2.addWidget(emptylabel)
+
+        sidebar_tab_layout2.addWidget(observer_label)
+        sidebar_tab_layout2.addWidget(self.observer_combobox)
+        
+        ### SYNTHETIC BOX
+        
+        #sidebar_tab_layout2.addWidget(emptylabel)
+
+        synthetic_label = QLabel()
+        synthetic_label.setText('Draw in Plot:')
+        sidebar_tab_layout2.addWidget(synthetic_label)
+        self.syntheticbox = QCheckBox("Synthetic In Situ Data")
+        self.syntheticbox.setToolTip('The 3DCORE Flux Rope Model was originally created by Andreas J. Weiss.') 
+        self.syntheticbox.stateChanged.connect(self.plot_mesh)
+        sidebar_tab_layout2.addWidget(self.syntheticbox)
+        
+        self.legendbox = QCheckBox("Legend")
+        self.legendbox.stateChanged.connect(self.plot_mesh)
+        sidebar_tab_layout2.addWidget(self.legendbox)
+        
+        self.fitlinesbox = QCheckBox("Fit Positions")
+        self.fitlinesbox.setToolTip('Show lines to indicate which values were used during fitting.') 
+        self.fitlinesbox.stateChanged.connect(self.plot_mesh)
+        sidebar_tab_layout2.addWidget(self.fitlinesbox)
+        
+        
+        sidebar_tab_widget2 = QWidget()
+        sidebar_tab_widget2.setLayout(sidebar_tab_layout2)
+        self.side_tab_widget.addTab(sidebar_tab_widget2, "Magnetic Field")
+        
+        sidebar_layout.addWidget(emptylabel)
+        sidebar_layout.addWidget(self.side_tab_widget) #, 4)
         
         sidebar_layout.addStretch(1)
         
+        
+        ## create general buttons outside of the tabview
         # FONT SIZE
         font_size_label = QLabel("Font Size:")
         self.font_size_combobox = QComboBox()
@@ -231,25 +342,43 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         sidebar_layout.addWidget(font_size_label)
         sidebar_layout.addWidget(self.font_size_combobox)
         
+        sidebar_layout.addWidget(emptylabel)
+        vlayout_buttons = QHBoxLayout()
+        self.selectbutton = QPushButton('Load Pickle File')
+        self.selectbutton.setToolTip('Load a pickle file from a previous fitting run. All parameters will be set according to the file.') 
+        self.selectbutton.clicked.connect(self.load)
+        vlayout_buttons.addWidget(self.selectbutton)
+        self.savebutton = QPushButton('Save Image')
+        self.savebutton.setToolTip('Save the currently shown image.') 
+        self.savebutton.clicked.connect(self.save)
+        vlayout_buttons.addWidget(self.savebutton)
+        sidebar_layout.addLayout(vlayout_buttons)
+        
         
         # add the sidebar to the main layout
         main_layout.addLayout(sidebar_layout, 0)
         
-        ############################### creating main canvas and time slider ###############################
+        ############################### creating main canvas and time slider ---- TAB 1 ###########################
         
         plotdate = dt.datetime(2020,4,15,6)
         runndiff = False
         
         middle_layout = QVBoxLayout()
         
+        self.middle_tab_widget = QTabWidget()
+        
+        self.middle_tab_widget.currentChanged.connect(self.tab_changed)
+
         self.fig = Figure(figsize=(10, 5), dpi=100)
         self.canvas = FigureCanvas(self.fig)
-        middle_layout.addWidget(self.canvas, 4)
+        self.middle_tab_widget.addTab(self.canvas, "3D Model") #middle_layout.addWidget(self.canvas, 4)
+        self.middle_tab_widget.setTabToolTip(0, 'Shows a 3D Model over Heliospheric Images.') 
         
         self.subplots = []
         self.images = []
         self.checkedsc = []
         self.iparams_list = inits
+        self.magiparams_list = maginits
         
         staimage = load_image('STA', 'COR2', plotdate, runndiff)
         self.ax1 = self.fig.add_subplot(121, projection = staimage)
@@ -279,8 +408,25 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         self.subplots.append(self.ax2)
         self.checkedsc.append('SOHO')
         
+        # Create the second tab layout
+        self.fig2 = Figure(figsize=(10, 5), dpi=100)
+        self.canvas2 = FigureCanvas(self.fig2)
+        self.middle_tab_widget.addTab(self.canvas2, "Insitu Mag")
+        self.middle_tab_widget.setTabToolTip(1, 'Shows synthetic in situ data generated from the model.') 
+        
+        self.ax1insitu = self.fig2.add_subplot(111)
+        infotext = "Please load the pickle file for a specific fitting run. Generating synthetic insitu data does highly depend \non the selected parameters and the whole parameter range cannot be searched by hand."
+        self.ax1insitu.text(0.5, 0.5, infotext, ha='center', va='center', fontsize=12)
+        self.ax1insitu.set_axis_off()
+        self.ax1insitu.set_xticks([])
+        self.ax1insitu.set_yticks([])
+
+        # Add the tab widget to the main layout
+        middle_layout.addWidget(self.middle_tab_widget, 4)
+        
         vlayout_dt = QHBoxLayout()
         slider = QSlider(Qt.Horizontal)
+        slider.setToolTip('Here you can propagate a model forward and backward in time. The images in the background will not be modified, but the assumed launch time changes according to how far the cme has propagated.') 
         slider.setRange(0, 1000)
         slider.setValue(0)
         slider.setTickInterval(10)
@@ -288,27 +434,43 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         self.dt_val = QLabel("\u0394 t: {} h".format(0))
         vlayout_dt.addWidget(self.dt_val)
         
+        
+        ############################### creating main canvas ---- TAB 2 ###########################
+        
         middle_layout.addLayout(vlayout_dt)
         
         main_layout.addLayout(middle_layout,5)
         
+        
         ############################### creating right sidebar ###############################
-        
-        
+    
         rightbar_layout = QVBoxLayout()
-        rightbar_layout.setAlignment(Qt.AlignTop)
+        #rightbar_layout.setAlignment(Qt.AlignTop)
         
         # launchtime
         
         dtlayout = QHBoxLayout()
         
-        dtlabel = QLabel("Launch Time:                     ")
+        dtlabel = QLabel("Assumed Launch Time:                     ")
+        dtlabel.setToolTip('The assumed Launch Time is calculated using the date shown in the images, as well as the time which has passed according to the slider below.') 
         dtlayout.addWidget(dtlabel)
         dtlayout.addStretch(1)
         
-        self.dtlabelupdating = QLabel(plotdate.strftime('%Y-%m-%d %H:%M:00'))
+        self.dtlabelupdating = QtWidgets.QDateTimeEdit() #QLabel(plotdate.strftime('%Y-%m-%d %H:%M:00'))
+        self.dtlabelupdating.setDisplayFormat("yyyy-MM-dd HH:mm:ss")
+        self.dtlabelupdating.setDateTime(QDateTime(2020, 4, 15,6,0))
+        #self.dtlabelupdating.setKeyboardTracking(False)
+        self.dtlabelupdating.dateTimeChanged.connect(self.handledatetimebox)
         dtlayout.addWidget(self.dtlabelupdating)
-        rightbar_layout.addLayout(dtlayout)
+        #rightbar_layout.addLayout(dtlayout)
+        
+        ####### TABVIEW
+        
+        right_tab_widget = QTabWidget()
+        
+        # Create the first tab layout
+        rightbar_tab_layout1 = QVBoxLayout()
+        #rightbar_tab_layout1.setAlignment(Qt.AlignTop)       
         
         # parameters
         
@@ -320,7 +482,7 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                 self.paramsliders.append(slider)
                 self.paramlabels.append(dtlabel)
             else:
-                rightbar_layout.addWidget(emptylabel)
+                rightbar_tab_layout1.addWidget(emptylabel)
                 hlayout = QHBoxLayout()
                 label = QLabel(params[i])
                 hlayout.addWidget(label)
@@ -328,17 +490,74 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                 updatelabel = QLabel('{}: {} {}'.format(variables[i], inits[i], units[i]))
                 hlayout.addWidget(updatelabel)
                 self.paramlabels.append(updatelabel)
-                rightbar_layout.addLayout(hlayout)
+                rightbar_tab_layout1.addLayout(hlayout)
             
                 slider = QSlider(Qt.Horizontal)
                 slider.setRange(int(mins[i]/resolutions[i]),int(maxs[i]/resolutions[i]))
                 slider.setValue(int(inits[i]/resolutions[i]))
                 self.paramsliders.append(slider)
-                rightbar_layout.addWidget(slider)
+                rightbar_tab_layout1.addWidget(slider)
         
         for slider in self.paramsliders:
             slider.valueChanged.connect(self.plot_mesh)
-
+            
+        rightbar_tab_widget1 = QWidget()
+        rightbar_tab_widget1.setLayout(rightbar_tab_layout1)
+        right_tab_widget.addTab(rightbar_tab_widget1, "General")
+            
+        
+        # Create the first tab layout
+        rightbar_tab_layout2 = QVBoxLayout()
+        rightbar_tab_layout2.setAlignment(Qt.AlignTop)
+        
+        # magparameters
+        
+        self.magparamlabels = []
+        self.magparamsliders = []
+        
+        for i in range(3):
+            rightbar_tab_layout2.addWidget(emptylabel)
+            hlayout = QHBoxLayout()
+            label = QLabel(magparams[i])
+            hlayout.addWidget(label)
+            hlayout.addStretch(1)
+            updatelabel = QLabel('{}: {} {}'.format(magvariables[i], maginits[i], magunits[i]))
+            hlayout.addWidget(updatelabel)
+            self.magparamlabels.append(updatelabel)
+            rightbar_tab_layout2.addLayout(hlayout)
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(int(magmins[i]/magresolutions[i]),int(magmaxs[i]/magresolutions[i]))
+            slider.setValue(int(maginits[i]/magresolutions[i]))
+            self.magparamsliders.append(slider)
+            rightbar_tab_layout2.addWidget(slider)
+        
+        for slider in self.magparamsliders:
+            slider.valueChanged.connect(self.plot_mesh)
+        
+        
+        
+        rightbar_tab_widget2 = QWidget()
+        rightbar_tab_widget2.setLayout(rightbar_tab_layout2)
+        right_tab_widget.addTab(rightbar_tab_widget2, "Magnetic Field")
+        
+        right_tab_widget.setTabToolTip(0, 'Modify general parameters of the model.') 
+        right_tab_widget.setTabToolTip(0, 'Modify magnetic field parameters of the model.') 
+        # Add the tab widget to the main layout
+        #rightbar_layout.setAlignment(Qt.AlignTop)
+        
+        rightbar_layout.addLayout(dtlayout)
+        rightbar_layout.addWidget(emptylabel)
+        rightbar_layout.addWidget(right_tab_widget) #, 4)
+        rightbar_layout.addStretch(1)
+        
+        vlayout_buttons = QHBoxLayout()
+        self.resetbutton = QPushButton('Reset Parameters')
+        self.resetbutton.setToolTip('This resets all parameters and their ranges.') 
+        self.resetbutton.clicked.connect(self.reset)
+        vlayout_buttons.addStretch(1)
+        vlayout_buttons.addWidget(self.resetbutton)
+        rightbar_layout.addLayout(vlayout_buttons)
+        
 
         # save / load
         
@@ -346,7 +565,7 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         
 
         # add the sidebar to the main layout
-        main_layout.addLayout(rightbar_layout,1)
+        main_layout.addLayout(rightbar_layout)
         
 
         # show the main window
@@ -398,14 +617,39 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         # redraw the canvas
         self.fig.canvas.draw()
         self.plot_mesh()
+        
+    def handledatetimebox(self):
+        
+        selected_date = self.calendar.selectedDate().toPyDate()
+        selected_time = QTime.fromString(self.time_combobox.currentText(), "h:mm AP").toPyTime()
+        plotdate = dt.datetime.combine(selected_date, selected_time)
+        minlaunchtime = plotdate - datetime.timedelta(hours = self.paramsliders[0].maximum()/10)
+        if self.dtlabelupdating.dateTime().toPyDateTime() < minlaunchtime:
+            self.paramsliders[0].setValue(int(0))
+        else:
+            deltatt = plotdate - self.dtlabelupdating.dateTime().toPyDateTime()
+            self.paramsliders[0].setValue(int(deltatt.total_seconds()/3600*10))
+        
+    def tab_changed(self):
+        self.side_tab_widget.setCurrentIndex(self.middle_tab_widget.currentIndex())
     
+    def observer_changed(self):
+        self.currentobserver = self.fitobservers[self.observer_combobox.currentIndex()]
+        _, _, starttime, endtime, _, self.insitudatapath = self.currentobserver
+        self.startselect.setDateTime(QDateTime.fromString(starttime.strftime('%Y-%m-%d %H:%M:00'),'yyyy-M-d hh:mm:ss'))
+        self.endselect.setDateTime(QDateTime.fromString(endtime.strftime('%Y-%m-%d %H:%M:00'),'yyyy-M-d hh:mm:ss'))
+        
     def plot_mesh(self):
         # clear the existing subfigures
         self.fig.clf()
         self.subplots =[]
+        self.insitusubplots =[]
         self.runndiff = False
         sender = self.sender() 
         self.iparams_list = []
+        self.magiparams_list = []
+        self.starttime = self.startselect.dateTime().toPyDateTime()
+        self.endtime = self.endselect.dateTime().toPyDateTime()
         
         for i, label in enumerate(self.paramlabels):
             if i == 0:
@@ -414,7 +658,7 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                 selected_time = QTime.fromString(self.time_combobox.currentText(), "h:mm AP").toPyTime()
                 plotdate = dt.datetime.combine(selected_date, selected_time)
                 launchtime = plotdate - datetime.timedelta(hours = self.paramsliders[i].value()/10)
-                self.dtlabelupdating.setText(launchtime.strftime('%Y-%m-%d %H:%M:00'))
+                self.dtlabelupdating.setDateTime(QDateTime.fromString(launchtime.strftime('%Y-%m-%d %H:%M:00'),'yyyy-M-d hh:mm:ss'))
             else:
                 
                 if resolutions[i] == 1:
@@ -425,6 +669,16 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                     val = float("{:.2f}".format(self.paramsliders[i].value()*resolutions[i]))
                 self.iparams_list.append(val)
                 label.setText('{}: {} {}'.format(variables[i], val, units[i]))
+                
+        for i, label in enumerate(self.magparamlabels):
+            if magresolutions[i] == 1:
+                val = int(self.magparamsliders[i].value()*magresolutions[i])
+            elif magresolutions[i] == 0.1:
+                val = float("{:.1f}".format(self.magparamsliders[i].value()*magresolutions[i]))
+            elif magresolutions[i] == 0.01:
+                val = float("{:.2f}".format(self.magparamsliders[i].value()*magresolutions[i]))
+            self.magiparams_list.append(val)
+            label.setText('{}: {} {}'.format(magvariables[i], val, magunits[i]))
 
                
         for i, image in enumerate(self.images):
@@ -451,28 +705,178 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                 params = dict(lw=0.5)
                 p = subplot.plot_coord(mesh.T, color='blue', scalex=False, scaley=False, **params)[0]
                 p2 = subplot.plot_coord(mesh, color='blue', scalex=False, scaley=False, **params)[0]
-                  #  self.meshplots.append(p)
-          #      else:
-                    # update plot
-            #        p = self.meshplots[i]
-
-            #        frame0 = mesh.frame.transform_to(image.coordinate_frame)
-             #       xdata = frame0.spherical.lon.to_value(u.deg)
-            #        ydata = frame0.spherical.lat.to_value(u.deg)
-           #         p.set_xdata(xdata)
-           #         p.set_ydata(ydata)
-           #         subplot.draw_artist(p)
-
             self.fig.canvas.draw()
+            
+        self.fig2.clf()
+        if self.observer_combobox.currentText() != "":
+            observer_obj = custom_observer(self.insitudatapath)
+            t, b = observer_obj.get([self.starttime,self.endtime], "mag", reference_frame="HEEQ", as_endpoints=True)
+            pos = observer_obj.trajectory(t, reference_frame="HEEQ")
+            if self.currentobserver[0] == 'solo':
+                obs_title = 'Solar Orbiter'
+            elif self.currentobserver[0] == 'PSP':
+                obs_title = 'Parker Solar Probe'
+                
+            self.insituax = self.fig2.add_subplot(1,1,1)
+            self.insituax.plot(t, np.sqrt(np.sum(b**2, axis=1)), "k", alpha=0.5, lw=3, label ='Btotal')
+            self.insituax.plot(t, b[:, 0], "r", alpha=1, lw=2, label ='Br')
+            self.insituax.plot(t, b[:, 1], "g", alpha=1, lw=2, label ='Bt')
+            self.insituax.plot(t, b[:, 2], "b", alpha=1, lw=2, label ='Bn')
+            
+            self.fig2.suptitle("Magnetic Field In Situ Data - "+obs_title)
+            
+            date_form = mdates.DateFormatter("%h %d %H")
+            self.insituax.xaxis.set_major_formatter(date_form)
+            
+            self.insituax.set_ylabel("B [nT]")
+            self.insituax.set_xticks(t[::len(t)//10])
+            self.insituax.set_xticklabels([date.strftime('%b %d %H') for date in t[::len(t)//10]], rotation=25, ha='right')
+
+            
+            
+            if self.legendbox.isChecked():
+                self.insituax.legend(loc='lower right')
+            if self.fitlinesbox.isChecked():
+                t_fit = self.currentobserver[1]
+                for _ in t_fit:
+                    self.insituax.axvline(x=_, lw=2, alpha=0.25, color="k", ls="--")
+                      
+            if self.syntheticbox.isChecked():
+                    
+                model_obj = py3dcore_h4c.ToroidalModel(dt_0, **iparams) # model gets initialized
+                model_obj.generator()
+                #model_obj = fp.returnfixedmodel(self.filename, fixed_iparams_arr='mean')
+                outa = np.squeeze(np.array(model_obj.simulator(t, pos))[0])
+                outa[outa==0] = np.nan
+                self.insituax.plot(t, np.sqrt(np.sum(outa**2, axis=1)), "k", alpha=0.5, linestyle='dashed', lw=3)
+                self.insituax.plot(t, outa[:, 0], "r", alpha=0.5, linestyle='dashed', lw=3)
+                self.insituax.plot(t, outa[:, 1], "g", alpha=0.5, linestyle='dashed', lw=3)
+                self.insituax.plot(t, outa[:, 2], "b", alpha=0.5, linestyle='dashed', lw=3)
+                
+            self.fig2.canvas.draw()
+        
 
         else:
             return
         
-    def load_model(self):
-        runndiff = False
+    def load(self):
+        options = QFileDialog.Options()
+        options |= QFileDialog.DontUseNativeDialog
+        fileName, _ = QFileDialog.getOpenFileName(self, "Select Pickle File", "", "Pickle Files (*.pkl *.pickle *.p)", options=options)
+        if fileName:
+            self.filename = fileName
+            # read from pickle file
+            file = open(fileName, "rb")
+            data = pickle.load(file)
+            file.close()
+            observers = data["observers"]
+            self.fitobservers = observers
+            self.observer_combobox.clear()
+            for obs in observers:
+                self.observer_combobox.addItem(obs[0])
+            t_0 = data["dt_0"]
+            deltat = 2
+            model_objt = data["model_obj"]
+            iparams_arrt = model_objt.iparams_arr    
+            meanparams = np.mean(model_objt.iparams_arr, axis=0)
+            maxparams = np.mean(model_objt.iparams_arr, axis=0) + np.std(model_objt.iparams_arr, axis=0)
+            minparams = np.mean(model_objt.iparams_arr, axis=0) - np.std(model_objt.iparams_arr, axis=0)
+            
+            
+            self.paramsliders[0].setValue(int(deltat/resolutions[0]))
+            
+            self.paramsliders[1].setValue(int(meanparams[1]/resolutions[1]))
+            self.paramsliders[1].setRange(int(minparams[1]/resolutions[1]),int(maxparams[1]/resolutions[1]))
+            
+            self.paramsliders[2].setValue(int(meanparams[2]/resolutions[2]))
+            self.paramsliders[2].setRange(int(minparams[2]/resolutions[2]),int(maxparams[2]/resolutions[2]))
+            
+            self.paramsliders[3].setValue(int(meanparams[3]/resolutions[3]))
+            self.paramsliders[3].setRange(int(minparams[3]/resolutions[3]),int(maxparams[3]/resolutions[3]))
+            
+            self.paramsliders[4].setValue(int(meanparams[4]/resolutions[4]))
+            self.paramsliders[4].setRange(int(minparams[4]/resolutions[4]),int(maxparams[4]/resolutions[4]))
+            
+            self.paramsliders[5].setValue(int(meanparams[5]/resolutions[5]))
+            self.paramsliders[5].setRange(int(minparams[5]/resolutions[5]),int(maxparams[5]/resolutions[5]))
+            
+            self.paramsliders[6].setValue(int(meanparams[6]/resolutions[6]))
+            self.paramsliders[6].setRange(int(minparams[6]/resolutions[6]),int(maxparams[6]/resolutions[6]))
+            
+            self.paramsliders[7].setValue(int(meanparams[7]/resolutions[7]))
+            self.paramsliders[7].setRange(int(minparams[7]/resolutions[7]),int(maxparams[7]/resolutions[7]))
+            
+            self.paramsliders[8].setValue(int(meanparams[9]/resolutions[8]))
+            
+            self.paramsliders[9].setValue(int(meanparams[12]/resolutions[9]))
+            self.paramsliders[9].setRange(int(minparams[12]/resolutions[9]),int(maxparams[12]/resolutions[9]))
+            
+            self.paramsliders[10].setValue(int(meanparams[13]/resolutions[10]))
+            self.paramsliders[10].setRange(int(minparams[13]/resolutions[10]),int(maxparams[13]/resolutions[10]))
+            
+            ## mag params
+            
+            self.magparamsliders[0].setValue(int(meanparams[8]/magresolutions[0]))
+            self.magparamsliders[0].setRange(int(minparams[8]/magresolutions[0]),int(maxparams[8]/magresolutions[0]))
+            self.magparamsliders[1].setValue(int(meanparams[10]/magresolutions[1]))
+            self.magparamsliders[2].setValue(int(meanparams[11]/magresolutions[2]))
+            self.magparamsliders[2].setRange(int(minparams[11]/magresolutions[2]),int(maxparams[11]/magresolutions[2]))
+            
+            self.corebox.setChecked(True)
+            plotttdate = t_0 + datetime.timedelta(hours = deltat)
+            date = QDate(plotttdate.year, plotttdate.month, plotttdate.day)
+            self.calendar.setSelectedDate(date)
+            if plotttdate.minute < 15:
+                minute = 0
+                hour = plotttdate.hour
+            elif plotttdate.minute < 45:
+                minute = 30
+                hour = plotttdate.hour
+            elif plotttdate.minute < 60:
+                minute = 0
+                hour = plotttdate.hour + 1
+            time = QTime(hour,minute)
+            self.time_combobox.setCurrentText(time.toString("h:mm AP"))
 
     def save(self):
-        runndiff = False
+        # Get file name and type from user
+        file_dialog = QFileDialog(self)
+        file_dialog.setNameFilter("JPG files (*.jpg);;PDF files (*.pdf);;PNG files (*.png)")
+        file_dialog.setDefaultSuffix('png')
+        file_dialog.setAcceptMode(QFileDialog.AcceptSave)
+        if file_dialog.exec_() == QFileDialog.Accepted:
+            file_name = file_dialog.selectedFiles()[0]
+        else:
+            return
+
+        # Get canvas pixmap and save to file
+        pixmap = self.canvas.grab()
+        pixmap.save(file_name)
+        
+    def save(self):
+        # Get file name and type from user
+        file_dialog = QFileDialog(self)
+        file_dialog.setNameFilter("JPG files (*.jpg);;PDF files (*.pdf);;PNG files (*.png)")
+        file_dialog.setDefaultSuffix('png')
+        file_dialog.setAcceptMode(QFileDialog.AcceptSave)
+        if file_dialog.exec_() == QFileDialog.Accepted:
+            file_name = file_dialog.selectedFiles()[0]
+        else:
+            return
+
+        # Get canvas pixmap and save to file
+        pixmap = self.canvas.grab()
+        pixmap.save(file_name)
+        
+    def reset(self):
+        
+        for i, slider in enumerate(self.paramsliders):
+            slider.setRange(int(mins[i]/resolutions[i]),int(maxs[i]/resolutions[i]))
+            slider.setValue(int(inits[i]/resolutions[i]))
+            
+        for i, slider in enumerate(self.magparamsliders):
+            slider.setRange(int(magmins[i]/magresolutions[i]),int(magmaxs[i]/magresolutions[i]))
+            slider.setValue(int(maginits[i]/magresolutions[i]))
         
     def get_iparams(self):
         model_kwargs = {
@@ -499,7 +903,7 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                 "cme_diameter_1au": {
                     "distribution": "fixed",
                     "default_value": self.iparams_list[3],
-                    "maximum": 0.35,
+                    "maximum": 5,
                     "minimum": 0.05
                 }, 
                 "cme_aspect_ratio": {
@@ -517,18 +921,25 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                 "cme_launch_velocity": {
                     "distribution": "fixed",
                     "default_value": self.iparams_list[6],
-                    "maximum": 1000,
+                    "maximum": 1500,
                     "minimum": 400
                 },
                 "t_factor": {
                     "distribution": "fixed",
-                    "default_value": 100,
+                    "default_value": self.magiparams_list[0],
                     "maximum": 250,
-                    "minimum": 50
+                    "minimum": -250
                 },
+                "magnetic_decay_rate": {
+                    "distribution": "fixed",
+                    "default_value": self.magiparams_list[1],
+                    "maximum": 2,
+                    "minimum": 1
+                },
+                
                 "magnetic_field_strength_1au": {
                     "distribution": "fixed",
-                    "default_value": 25,
+                    "default_value": self.magiparams_list[2],
                     "maximum": 50,
                     "minimum": 5
                 },
@@ -536,20 +947,20 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                 "cme_expansion_rate": {
                     "distribution": "fixed",
                     "default_value": self.iparams_list[7],
-                    "maximum": 2,
+                    "maximum": 4,
                     "minimum": 0.3
                 }, 
                 "background_drag": {
                     "distribution": "fixed",
                     "default_value": self.iparams_list[8],
-                    "maximum": 2,
+                    "maximum": 4,
                     "minimum": 0.2
                 }, 
                 "background_velocity": {
                     "distribution": "fixed",
                     "default_value": self.iparams_list[9],
-                    "maximum": 700,
-                    "minimum": 250
+                    "maximum": 1000,
+                    "minimum": 100
                 } 
             }
         }

@@ -598,10 +598,9 @@ def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, cust
     else:
         observer_obj = custom_observer(custom_data)
         t, b = observer_obj.get([start, end], "mag", reference_frame="HEEQ", as_endpoints=True)
+
     
-    #print(t)
     pos = observer_obj.trajectory(t, reference_frame="HEEQ")
-    #print(pos)
     
     if best == True:
         model_obj = returnfixedmodel(filepath)
@@ -611,16 +610,16 @@ def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, cust
         
     if fixed is not None:
         model_obj = returnfixedmodel(filepath, fixed)
-        
         outa = np.squeeze(np.array(model_obj.simulator(t, pos))[0])
         outa[outa==0] = np.nan
     
     if mean == True:
         model_obj = returnfixedmodel(filepath, fixed_iparams_arr='mean')
         
+        model_obj.generator()
         means = np.squeeze(np.array(model_obj.simulator(t, pos))[0])
         means[means==0] = np.nan
-            
+    #print(outa)        
     # get ensemble_data
     if ensemble == True:
         ed = py3dcore_h4c.generate_ensemble(filepath, t, reference_frame="HEEQ", reference_frame_to="HEEQ", max_index=128, custom_data=custom_data)
@@ -663,7 +662,6 @@ def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, cust
         plt.plot(t, means[:, 0], "r", alpha=0.75, linestyle='dashdot', lw=lw_mean)
         plt.plot(t, means[:, 1], "g", alpha=0.75, linestyle='dashdot', lw=lw_mean)
         plt.plot(t, means[:, 2], "b", alpha=0.75, linestyle='dashdot', lw=lw_mean)
-        
         
         
     date_form = mdates.DateFormatter("%h %d %H")
@@ -737,7 +735,6 @@ def insituprofiles(observer, date=None, start=None, end=None, filepath=None, sav
     
     if mean == True:
         model_obj = returnfixedmodel(filepath, fixed_iparams_arr='mean')
-        
         means = np.squeeze(np.array(model_obj.simulator(t, pos))[0])     
         means[means==0] = np.nan
         if np.isnan(means).all() == True:
@@ -830,7 +827,7 @@ def update_model(model, t_i=None, lon=None, lat=None, inc=None, dia=None, delta=
         model.iparams_arr[0][12] = bg_d
         
     if bg_v is not None:
-        model.iparams_arr[0][13] = lobg_vn
+        model.iparams_arr[0][13] = bg_v
         
     model.sparams_arr = np.empty((model.ensemble_size, model.sparams), dtype=model.dtype)
     model.qs_sx = np.empty((model.ensemble_size, 4), dtype=model.dtype)
@@ -868,11 +865,15 @@ def returnfixedmodel(filepath, fixed_iparams_arr=None):
             logger.info("No iparams_arr given, using parameters for run with minimum eps.")
             res, allres, ind, meanparams = get_params(filepath)
             model_obj.iparams_arr = np.expand_dims(res, axis=0)
+            
     
     model_obj.sparams_arr = np.empty((model_obj.ensemble_size, model_obj.sparams), dtype=model_obj.dtype)
     model_obj.qs_sx = np.empty((model_obj.ensemble_size, 4), dtype=model_obj.dtype)
     model_obj.qs_xs = np.empty((model_obj.ensemble_size, 4), dtype=model_obj.dtype)
     
+    #model_obj.iparams_kernel = None
+    #model_obj.iparams_kernel_decomp = None
+    #model_obj.iparams_weight = None
     model_obj.iparams_meta = np.empty((len(model_obj.iparams), 7), dtype=model_obj.dtype)
     
     #iparams_meta is updated
