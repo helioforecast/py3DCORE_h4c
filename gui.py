@@ -10,6 +10,8 @@ from py3dcore_h4c.fitter.base import custom_observer, BaseFitter, get_ensemble_m
 import datetime
 import pickle
 
+import functools
+
 import py3dcore_h4c.fluxplot as fp
 
 import matplotlib
@@ -77,13 +79,12 @@ magresolutions = [1, 0.01, 1]
 # disable sunpy warnings
 log.setLevel('ERROR')
 
-
-
 #################################################################################
 
 def running_difference(a, b):
     return Map(b.data * 1.0 - a.data * 1.0, b.meta)
 
+@functools.lru_cache(maxsize=25)
 def load_image(spacecraft: str, detector: str, date: dt.datetime, runndiff: bool):
     if spacecraft == 'STA':
         observatory = 'STEREO_A'
@@ -111,6 +112,7 @@ def load_image(spacecraft: str, detector: str, date: dt.datetime, runndiff: bool
     else:
         return f
 
+@functools.lru_cache(maxsize=25)
 def download_helioviewer(date, observatory, instrument, detector):
     file = hv.download_jp2(date, observatory=observatory, instrument=instrument, detector=detector)
     f = Map(file)
@@ -638,7 +640,8 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         _, _, starttime, endtime, _, self.insitudatapath = self.currentobserver
         self.startselect.setDateTime(QDateTime.fromString(starttime.strftime('%Y-%m-%d %H:%M:00'),'yyyy-M-d hh:mm:ss'))
         self.endselect.setDateTime(QDateTime.fromString(endtime.strftime('%Y-%m-%d %H:%M:00'),'yyyy-M-d hh:mm:ss'))
-        
+    
+    
     def plot_mesh(self):
         # clear the existing subfigures
         self.fig.clf()
@@ -712,9 +715,9 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
             observer_obj = custom_observer(self.insitudatapath)
             t, b = observer_obj.get([self.starttime,self.endtime], "mag", reference_frame="HEEQ", as_endpoints=True)
             pos = observer_obj.trajectory(t, reference_frame="HEEQ")
-            if self.currentobserver[0] == 'solo':
+            if (self.currentobserver[0] == 'solo') or (self.currentobserver[0] == 'SOLO'):
                 obs_title = 'Solar Orbiter'
-            elif self.currentobserver[0] == 'PSP':
+            elif (self.currentobserver[0] == 'PSP') or (self.currentobserver[0] == 'psp'):
                 obs_title = 'Parker Solar Probe'
                 
             self.insituax = self.fig2.add_subplot(1,1,1)
@@ -742,11 +745,12 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                     self.insituax.axvline(x=_, lw=2, alpha=0.25, color="k", ls="--")
                       
             if self.syntheticbox.isChecked():
-                    
+                dt_0 = self.dtlabelupdating.dateTime().toPyDateTime()
                 model_obj = py3dcore_h4c.ToroidalModel(dt_0, **iparams) # model gets initialized
                 model_obj.generator()
-                #model_obj = fp.returnfixedmodel(self.filename, fixed_iparams_arr='mean')
+                # model_obj = fp.returnfixedmodel(self.filename, fixed_iparams_arr='mean')
                 outa = np.squeeze(np.array(model_obj.simulator(t, pos))[0])
+
                 outa[outa==0] = np.nan
                 self.insituax.plot(t, np.sqrt(np.sum(outa**2, axis=1)), "k", alpha=0.5, linestyle='dashed', lw=3)
                 self.insituax.plot(t, outa[:, 0], "r", alpha=0.5, linestyle='dashed', lw=3)
@@ -774,11 +778,15 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
             self.observer_combobox.clear()
             for obs in observers:
                 self.observer_combobox.addItem(obs[0])
+            
             t_0 = data["dt_0"]
+            #dt_0 = data["dt_0"]
+            self.dtlabelupdating.setDateTime(QDateTime.fromString(t_0.strftime('%Y-%m-%d %H:%M:00'),'yyyy-M-d hh:mm:ss'))
             deltat = 2
             model_objt = data["model_obj"]
             iparams_arrt = model_objt.iparams_arr    
-            meanparams = np.mean(model_objt.iparams_arr, axis=0)
+            # meanparams = np.mean(model_objt.iparams_arr, axis=0)
+            meanparams = model_objt.iparams_arr[0]
             maxparams = np.mean(model_objt.iparams_arr, axis=0) + np.std(model_objt.iparams_arr, axis=0)
             minparams = np.mean(model_objt.iparams_arr, axis=0) - np.std(model_objt.iparams_arr, axis=0)
             
@@ -823,6 +831,7 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
             self.magparamsliders[2].setRange(int(minparams[11]/magresolutions[2]),int(maxparams[11]/magresolutions[2]))
             
             self.corebox.setChecked(True)
+            self.syntheticbox.setChecked(True)
             plotttdate = t_0 + datetime.timedelta(hours = deltat)
             date = QDate(plotttdate.year, plotttdate.month, plotttdate.day)
             self.calendar.setSelectedDate(date)
@@ -852,21 +861,22 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         # Get canvas pixmap and save to file
         pixmap = self.canvas.grab()
         pixmap.save(file_name)
+        return
         
-    def save(self):
-        # Get file name and type from user
-        file_dialog = QFileDialog(self)
-        file_dialog.setNameFilter("JPG files (*.jpg);;PDF files (*.pdf);;PNG files (*.png)")
-        file_dialog.setDefaultSuffix('png')
-        file_dialog.setAcceptMode(QFileDialog.AcceptSave)
-        if file_dialog.exec_() == QFileDialog.Accepted:
-            file_name = file_dialog.selectedFiles()[0]
-        else:
-            return
-
-        # Get canvas pixmap and save to file
-        pixmap = self.canvas.grab()
-        pixmap.save(file_name)
+#    def save(self):
+#        # Get file name and type from user
+#        file_dialog = QFileDialog(self)
+#        file_dialog.setNameFilter("JPG files (*.jpg);;PDF files (*.pdf);;PNG files (*.png)")
+#        file_dialog.setDefaultSuffix('png')
+#        file_dialog.setAcceptMode(QFileDialog.AcceptSave)
+#        if file_dialog.exec_() == QFileDialog.Accepted:
+#            file_name = file_dialog.selectedFiles()[0]
+#        else:
+#            return
+#
+#        # Get canvas pixmap and save to file
+#        pixmap = self.canvas.grab()
+#        pixmap.save(file_name)
         
     def reset(self):
         
@@ -940,8 +950,8 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
                 "magnetic_field_strength_1au": {
                     "distribution": "fixed",
                     "default_value": self.magiparams_list[2],
-                    "maximum": 50,
-                    "minimum": 5
+                    "maximum": 150,
+                    "minimum": 0
                 },
                 
                 "cme_expansion_rate": {
@@ -966,6 +976,7 @@ class py3dcoreGUI(QtWidgets.QWidget): #.QMainWindow
         }
         return model_kwargs
 
+ 
 
 def main():
     qapp = QtWidgets.QApplication(sys.argv)

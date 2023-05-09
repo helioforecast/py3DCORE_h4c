@@ -5,6 +5,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from astropy.coordinates import SkyCoord
 import astropy.units as u
+import functools
 
 from typing import Any, List, Optional, Sequence, Type, Union
 
@@ -25,7 +26,7 @@ def py3dcore_mesh(dt_0 = 'now', t_snap = None, model_kwargs: dict = {}):
     obj.propagator(t_snap)
     wf_model = obj.visualize_shape(0,)
     return wf_model
-    
+   
 def py3dcore_mesh_sunpy(dt_0 = 'now', t_snap = None, model_kwargs: dict = {}):
     
     wf_model = py3dcore_mesh(dt_0, t_snap, model_kwargs)

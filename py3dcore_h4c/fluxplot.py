@@ -214,9 +214,8 @@ def returnmodel(filepath):
     
     out = get_ensemble_stats(filepath)
     overwrite = get_overwrite(out)
-    
     model_obj = py3dcore_h4c.ToroidalModel(t_launch, 1, iparams=overwrite)
-    
+    print(model_obj.iparams_arr)
     model_obj.generator()
     
     return model_obj
@@ -363,7 +362,7 @@ def full3d_multiview(t_launch, filepath):
     ax2 = plt.subplot2grid((2, 3), (0, 2),projection='3d')  
     ax3 = plt.subplot2grid((2, 3), (1, 2),projection='3d')  
     
-    model_obj = returnmodel(filepath)
+    model_obj = returnfixedmodel(filepath, fixed_iparams_arr='mean') #returnmodel(filepath)
     
     ######### tilted view
     plot_configure(ax1, view_azim=150, view_elev=25, view_radius=.2, light_source=True) #view_radius=.08
@@ -441,7 +440,7 @@ def full3d_multiview_movie(t_launch, t, filepath, frametime):
     sns.set_style('whitegrid')
     sns.set_style("ticks",{'grid.linestyle': '--'})
     
-    model_obj = returnmodel(filepath)
+    model_obj = returnfixedmodel(filepath, fixed_iparams_arr='mean') #returnmodel(filepath)
     
     ######### tilted view
     plot_configure(ax1, view_azim=150, view_elev=25, view_radius=.2,light_source=True) #view_radius=.08
@@ -478,7 +477,7 @@ def full3d_multiview_movie(t_launch, t, filepath, frametime):
     return fig
     
     
-def full3d(spacecraftlist=['solo', 'psp'], planetlist =['Earth'], t=None, traj = 50, filepath=None, custom_data=False, save_fig = True, legend = True, title = True,**kwargs):
+def full3d(spacecraftlist=['solo', 'psp'], planetlist =['Earth'], t=None, traj = 50, filepath=None, custom_data=False, save_fig = True, legend = True, title=True, view_azim=0, view_elev=45, view_radius=0.2, **kwargs):
     
     """
     Plots 3d.
@@ -515,9 +514,9 @@ def full3d(spacecraftlist=['solo', 'psp'], planetlist =['Earth'], t=None, traj =
     fig = plt.figure(figsize=(15,12),dpi=200)
     ax = fig.add_subplot(111, projection='3d')
     
-    plot_configure(ax, view_azim=0, view_elev=45, view_radius=0.2)
+    plot_configure(ax, view_azim=view_azim, view_elev=view_elev, view_radius=view_radius)
     
-    model_obj = returnmodel(filepath)
+    model_obj = returnfixedmodel(filepath, fixed_iparams_arr='mean') #returnmodel(filepath)
     
     plot_3dcore(ax, model_obj, t, color=c2)
     plot_3dcore_field(ax, model_obj, color=c2, step_size=0.005, lw=1.1, ls="-")
@@ -551,7 +550,7 @@ def full3d(spacecraftlist=['solo', 'psp'], planetlist =['Earth'], t=None, traj =
         
     
     if legend == True:
-        ax.legend(loc='lower left')
+        ax.legend(loc='upper right')
     if title == True:
         plt.title('3DCORE fitting result - ' + t.strftime('%Y-%m-%d-%H'))
     if save_fig == True:
@@ -561,7 +560,7 @@ def full3d(spacecraftlist=['solo', 'psp'], planetlist =['Earth'], t=None, traj =
 
         
 
-def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, custom_data=False, save_fig = True, best = True, ensemble = True, mean = False, legend=True, fixed = None):
+def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, custom_data=False, save_fig = True, best = True, ensemble = True, mean = False, legend=True, fixed=None, max_index=128, title=True, fit_points=True):
     
     """
     Plots the synthetic insitu data plus the measured insitu data and ensemble fit.
@@ -576,6 +575,9 @@ def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, cust
         custom_data       path to custom data, otherwise heliosat is used
         save_fig          whether to save the created figure
         legend            whether to plot legend 
+        max_index         how much to keep of the generated ensemble
+        title             whether to plot title 
+        fit_points        whether to indicate fitting points in plot
 
     Returns:
         None
@@ -592,7 +594,6 @@ def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, cust
         observer_obj = getattr(heliosat, observer)() # get observer obj
         logger.info("Using HelioSat to retrieve observer data")
         dt, b = observer_obj.get([start, end], "mag", reference_frame="HEEQ", as_endpoints=True)
-    # print(t)
         t = []
         t = [datetime.datetime.fromtimestamp(dt[i]) for i in range(len(dt))] # .strftime('%Y-%m-%d %H:%M:%S.%f')
     else:
@@ -607,11 +608,13 @@ def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, cust
         
         outa = np.squeeze(np.array(model_obj.simulator(t, pos))[0])
         outa[outa==0] = np.nan
+        print(t, pos, outa)
         
     if fixed is not None:
         model_obj = returnfixedmodel(filepath, fixed)
         outa = np.squeeze(np.array(model_obj.simulator(t, pos))[0])
         outa[outa==0] = np.nan
+        
     
     if mean == True:
         model_obj = returnfixedmodel(filepath, fixed_iparams_arr='mean')
@@ -629,15 +632,21 @@ def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, cust
     lw_mean = 3  # linewidth for plotting the mean run
     lw_fitp = 2  # linewidth for plotting the lines where fitting points
     
-    if observer == 'solo':
+    if (observer == 'solo') or (observer == 'SOLO'):
         obs_title = 'Solar Orbiter'
 
         
-    if observer == 'PSP':
+    if (observer == 'PSP') or (observer == 'psp'):
         obs_title = 'Parker Solar Probe'
 
+    if (observer == 'Wind') or (observer == 'WIND') or (observer == 'wind'):
+        obs_title = 'WIND'  
+        
     plt.figure(figsize=(20, 10))
-    plt.title("3DCORE fitting result - "+obs_title)
+    if title == True:
+        plt.title("3DCORE fitting result - "+obs_title)
+
+        
     plt.plot(t, np.sqrt(np.sum(b**2, axis=1)), "k", alpha=0.5, lw=3, label ='Btotal')
     plt.plot(t, b[:, 0], "r", alpha=1, lw=lw_insitu, label ='Br')
     plt.plot(t, b[:, 1], "g", alpha=1, lw=lw_insitu, label ='Bt')
@@ -671,9 +680,10 @@ def fullinsitu(observer, t_fit=None, start = None, end=None, filepath=None, cust
     # plt.xlabel("Time")
     plt.xticks(rotation=25, ha='right')
     if legend == True:
-        plt.legend(loc='lower right')
-    for _ in t_fit:
-        plt.axvline(x=_, lw=lw_fitp, alpha=0.25, color="k", ls="--")
+        plt.legend(loc='lower right',ncol=2)
+    if fit_points == True:    
+        for _ in t_fit:
+            plt.axvline(x=_, lw=lw_fitp, alpha=0.25, color="k", ls="--")
     if save_fig == True:
         plt.savefig(filepath[:-7] + 'fullinsitu.pdf', dpi=300)    
     plt.show()
@@ -878,6 +888,7 @@ def returnfixedmodel(filepath, fixed_iparams_arr=None):
     
     #iparams_meta is updated
     generate_quaternions(model_obj.iparams_arr, model_obj.qs_sx, model_obj.qs_xs)
+    print(model_obj.iparams_arr)
     return model_obj
     
     

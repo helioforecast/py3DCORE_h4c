@@ -119,7 +119,7 @@ if __name__ == "__main__":
     }
     
     
-    output = 'sep2022_multi_1024_1/'
+    output = 'HTR_sep2022_multi_1024_1/'
     
 
     # Deleting a non-empty folder
@@ -135,4 +135,4 @@ if __name__ == "__main__":
  #   fitter.add_observer("PSP", t_fit_p, t_s_p, t_e_p, custom_data='psp_2022sep.p')
     fitter.add_observer("SOLO", t_fit_s, t_s_s, t_e_s, custom_data='solo_2022sep.p')
 
-    fitter.run(ensemble_size=1024, reference_frame="HEEQ", jobs=128, workers=128, sampling_freq=3600, output=output,  eps_quantile=0.25, use_multiprocessing=True, custom_data=True)
+    fitter.run(ensemble_size=512, reference_frame="HEEQ", jobs=5, workers=5, sampling_freq=3600, output=output,  eps_quantile=0.25, use_multiprocessing=True, custom_data=True)
